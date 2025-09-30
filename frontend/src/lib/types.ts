@@ -88,6 +88,7 @@ export interface FlightBooking {
   status: string;
   totalPrice: number;
   userId: string;
+  user?: User;
 }
 
 export interface HotelBooking {
@@ -107,12 +108,49 @@ export interface HotelBooking {
   status: string;
   totalPrice: number;
   userId: string;
+  user?: User;
 }
 
 export interface User {
   _id: string;
   email: string;
   name: string;
+}
+
+// Simplified booking types for the all bookings endpoint
+export interface AllFlightBooking {
+  _id: string;
+  _creationTime: number;
+  bookingDate: number;
+  bookingReference: string;
+  currency: string;
+  flightId: string;
+  passengerEmail: string;
+  passengerName: string;
+  seatNumber: string;
+  status: string;
+  totalPrice: number;
+  userId: string;
+  user?: User;
+}
+
+export interface AllHotelBooking {
+  _id: string;
+  _creationTime: number;
+  bookingDate: number;
+  bookingReference: string;
+  checkInDate: string;
+  checkOutDate: string;
+  currency: string;
+  guestEmail: string;
+  guestName: string;
+  hotelId: string;
+  numberOfNights: number;
+  roomType: string;
+  status: string;
+  totalPrice: number;
+  userId: string;
+  user?: User;
 }
 
 export interface UserBookings {
@@ -169,6 +207,11 @@ export interface FlightBookingsResponse {
 
 export interface HotelBookingsResponse {
   bookings: HotelBooking[];
+}
+
+export interface AllBookingsResponse {
+  flights: AllFlightBooking[];
+  hotels: AllHotelBooking[];
 }
 
 export interface UsageStatsResponse {

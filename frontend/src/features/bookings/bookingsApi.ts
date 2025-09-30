@@ -3,9 +3,15 @@ import type {
   FlightBookingsResponse,
   HotelBookingsResponse,
   UserBookings,
+  AllBookingsResponse,
 } from "@/lib/types";
 
 export const bookingsApi = {
+  // Get all bookings with user details
+  getAllBookings: (): Promise<AllBookingsResponse> => {
+    return apiGet<AllBookingsResponse>("/bookings/all");
+  },
+
   // Get all flight bookings
   getFlightBookings: (): Promise<FlightBookingsResponse> => {
     return apiGet<FlightBookingsResponse>("/bookings/flights");
