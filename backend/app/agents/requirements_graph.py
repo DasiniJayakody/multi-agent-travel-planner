@@ -1,11 +1,12 @@
 import json
+from typing import Optional
 
 from langchain.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.types import interrupt, Command
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.agents.travel_system import requirements_agent
+from app.agents.travel_system_agents import requirements_agent
 
 
 checkpointer = InMemorySaver()
@@ -14,12 +15,14 @@ checkpointer = InMemorySaver()
 class RequirementsGraphState(MessagesState):
     requirements_complete: bool
     interruption_message: str
+    requirements: Optional[dict]
 
 
 def requirements_agent_node(state: RequirementsGraphState) -> RequirementsGraphState:
     response = requirements_agent.invoke({"messages": state["messages"]})
 
-    requirements_response = response["structured_response"].requirements
+    response = response["structured_response"]
+    requirements_response = response.requirements
 
     if requirements_response.missing_info.question != "":
         return {
@@ -28,14 +31,15 @@ def requirements_agent_node(state: RequirementsGraphState) -> RequirementsGraphS
             ],
             "interruption_message": requirements_response.missing_info.question,
             "requirements_complete": False,
+            "requirements": None,
         }
 
+    # Store complete requirements as dict in state
     return {
-        "messages": [
-            AIMessage(content=json.dumps(response["structured_response"].model_dump()))
-        ],
+        "messages": [],
         "requirements_complete": True,
         "interruption_message": "",
+        "requirements": requirements_response.model_dump(),
     }
 
 
@@ -50,6 +54,7 @@ def ask_user_for_info(state: RequirementsGraphState) -> RequirementsGraphState:
         "messages": [HumanMessage(content=user_response)],
         "interruption_message": "",
         "requirements_complete": False,
+        "requirements": None,
     }
 
 
@@ -92,4 +97,4 @@ if __name__ == "__main__":
         else:
             break
 
-    print(json.dumps(json.loads(result["messages"][-1].content), indent=4))
+    print(result["requirements"])
