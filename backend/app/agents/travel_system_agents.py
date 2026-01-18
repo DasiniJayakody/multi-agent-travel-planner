@@ -9,7 +9,9 @@ from app.agents.tools.booking_tools import book_flight, book_hotel, search_hotel
 from app.agents.response_models.requirements_agent import RequirementsAgentResponseModel
 from app.agents.response_models.planner_agent import PlannerAgentResponseModel
 from app.agents.response_models.booker_agent import BookerAgentResponseModel
+from app.agents.response_models.planning_agent import PlanningAgentResponseModel
 from app.agents.prompts.travel_system import (
+    PLANNING_AGENT_SYSTEM_PROMPT,
     REQUIREMENTS_AGENT_SYSTEM_PROMPT,
     PLANNER_AGENT_SYSTEM_PROMPT,
     BOOKER_AGENT_SYSTEM_PROMPT,
@@ -24,6 +26,14 @@ requirements_agent = create_agent(
     response_format=ToolStrategy(RequirementsAgentResponseModel),
     system_prompt=REQUIREMENTS_AGENT_SYSTEM_PROMPT,
     # checkpointer=MemorySaver(),  # Manages state in memory for the session
+)
+
+planning_agent = create_agent(
+    model=model,
+    name="planning",
+    tools=[],
+    response_format=ToolStrategy(PlanningAgentResponseModel),
+    system_prompt=PLANNING_AGENT_SYSTEM_PROMPT,
 )
 
 planner_agent = create_agent(

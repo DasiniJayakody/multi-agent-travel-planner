@@ -148,3 +148,6 @@ tsconfig.tsbuildinfo
 # Testing
 coverage/
 .jest/
+
+.env
+backend/.env

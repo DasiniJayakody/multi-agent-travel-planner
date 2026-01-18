@@ -1,5 +1,6 @@
 import json
 from typing import Optional
+import os
 
 from langchain.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, MessagesState, START, END
@@ -8,7 +9,11 @@ from langgraph.types import Command, interrupt
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.requirements_graph import compiled_graph as requirements_graph
-from app.agents.travel_system_agents import planner_agent, booker_agent
+from app.agents.travel_system_agents import (
+    planner_agent,
+    booker_agent,
+    planning_agent,
+)
 from app.agents.requirements_graph import RequirementsGraphState
 
 
@@ -18,9 +23,60 @@ checkpointer = InMemorySaver()
 class TravelSystemState(MessagesState):
     """State for the full travel planning pipeline."""
 
-    requirements: Optional[dict]  # CompleteRequirements dict from requirements graph
+    # Query Planning (new)
+    plan: Optional[str]  # Search strategy from planning agent
+    sub_queries: Optional[list]  # Decomposed search queries
+
+    # CompleteRequirements dict from requirements graph
+    requirements: Optional[dict]
     itinerary: Optional[dict]  # Itinerary dict from planner agent
     bookings: Optional[dict]  # Bookings dict from booker agent
+
+
+def planning_node(state: TravelSystemState) -> TravelSystemState:
+    """
+    Analyze the user's travel query and decompose it into a structured plan.
+    This helps the requirements gathering agent understand multi-part queries better.
+    """
+    # Get the user's initial message
+    messages = state.get("messages", [])
+    if not messages:
+        return {"plan": None, "sub_queries": None}
+
+    user_message = messages[-1].content if messages else ""
+
+    # Optional stub mode to avoid LLM calls during verification
+    if os.getenv("PLANNING_STUB", "0") == "1":
+        plan = (
+            "Analyze user query, identify destinations, dates, preferences, and create "
+            "focused sub-queries to guide requirements gathering and itinerary planning."
+        )
+        sub_queries = [
+            f"{user_message} – destinations & regions",
+            f"{user_message} – dates & duration",
+            f"{user_message} – activities & interests",
+        ]
+    else:
+        # Invoke planning agent
+        planning_prompt = f"""Analyze the following travel query and create a structured plan:
+
+Query: {user_message}
+
+Decompose it into specific search aspects and sub-queries that will help gather all necessary information."""
+
+        response = planning_agent.invoke(
+            {"messages": [HumanMessage(content=planning_prompt)]}
+        )
+
+        structured = response.get("structured_response")
+        plan = structured.plan if structured else "No plan generated"
+        sub_queries = structured.sub_queries if structured else []
+
+    return {
+        "messages": [AIMessage(content=f"Plan: {plan}", name="planner_node")],
+        "plan": plan,
+        "sub_queries": sub_queries,
+    }
 
 
 def requirements_subgraph_node(
@@ -50,7 +106,7 @@ def requirements_subgraph_node(
         interruption_message="",
         requirements=state.get("requirements"),
     )
-    
+
     subgraph_result = requirements_graph.invoke(
         subgraph_state,
         subgraph_config,
@@ -74,13 +130,13 @@ def requirements_subgraph_node(
         # This will pause the top-level graph and return the interrupt to the API
         # When resumed, interrupt() will return the resume value
         user_response = interrupt(interrupt_message)
-        
+
         # If we get here, we're resuming - resume the subgraph with user response
         subgraph_result = requirements_graph.invoke(
             Command(resume=user_response),
             subgraph_config,
         )
-        
+
         # Check again for interrupts (subgraph might need more info)
         if "__interrupt__" in subgraph_result:
             interrupt_value = subgraph_result["__interrupt__"]
@@ -92,7 +148,7 @@ def requirements_subgraph_node(
                     interrupt_message = str(interrupt_obj)
             else:
                 interrupt_message = str(interrupt_value)
-            
+
             # Propagate the new interrupt
             interrupt(interrupt_message)
 
@@ -102,6 +158,8 @@ def requirements_subgraph_node(
     # The result contains 'requirements' field populated when complete
     return {
         "messages": [AIMessage(content=json.dumps(requirements), name="requirements")],
+        "plan": state.get("plan"),
+        "sub_queries": state.get("sub_queries"),
         "requirements": requirements,
         "itinerary": None,
         "bookings": None,
@@ -129,6 +187,8 @@ def planner_agent_node(state: TravelSystemState) -> TravelSystemState:
 
     return {
         "messages": [AIMessage(content=json.dumps(itinerary), name="planner")],
+        "plan": state.get("plan"),
+        "sub_queries": state.get("sub_queries"),
         "requirements": requirements,
         "itinerary": itinerary,
         "bookings": None,
@@ -166,6 +226,8 @@ Return booking confirmations for both flight and hotel."""
 
     return {
         "messages": [AIMessage(content=json.dumps(bookings), name="booker")],
+        "plan": state.get("plan"),
+        "sub_queries": state.get("sub_queries"),
         "requirements": requirements,
         "itinerary": itinerary,
         "bookings": bookings,
@@ -175,12 +237,14 @@ Return booking confirmations for both flight and hotel."""
 # Build the graph
 graph = StateGraph(TravelSystemState)
 
+graph.add_node("planning", planning_node)
 graph.add_node("requirements_subgraph", requirements_subgraph_node)
 graph.add_node("planner", planner_agent_node)
 graph.add_node("booker", booker_agent_node)
 
 # Define flow
-graph.add_edge(START, "requirements_subgraph")
+graph.add_edge(START, "planning")
+graph.add_edge("planning", "requirements_subgraph")
 graph.add_edge("requirements_subgraph", "planner")
 graph.add_edge("planner", "booker")
 graph.add_edge("booker", END)
@@ -196,6 +260,8 @@ if __name__ == "__main__":
                 content="I want to go to Seoul(ICN) from Tokyo(NRT). My dates are flexible."
             )
         ],
+        plan=None,
+        sub_queries=None,
         requirements=None,
         itinerary=None,
         bookings=None,
@@ -207,6 +273,8 @@ if __name__ == "__main__":
     result = travel_system_graph.invoke(initial_state, config)
 
     print("\n=== FINAL RESULTS ===")
-    print(f"Requirements: {json.dumps(result.get('requirements'), indent=2)}")
+    print(f"Plan: {result.get('plan')}")
+    print(f"\nSub-Queries: {result.get('sub_queries')}")
+    print(f"\nRequirements: {json.dumps(result.get('requirements'), indent=2)}")
     print(f"\nItinerary: {json.dumps(result.get('itinerary'), indent=2)}")
     print(f"\nBookings: {json.dumps(result.get('bookings'), indent=2)}")

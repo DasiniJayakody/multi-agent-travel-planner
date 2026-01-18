@@ -21,8 +21,14 @@ class RequirementsGraphState(MessagesState):
 def requirements_agent_node(state: RequirementsGraphState) -> RequirementsGraphState:
     response = requirements_agent.invoke({"messages": state["messages"]})
 
-    response = response["structured_response"]
-    requirements_response = response.requirements
+    # Handle both structured_response key and direct response
+    if isinstance(response, dict) and "structured_response" in response:
+        requirements_response = response["structured_response"].requirements
+    elif hasattr(response, "requirements"):
+        requirements_response = response.requirements
+    else:
+        # Fallback: treat response as the requirements object itself
+        requirements_response = response
 
     if requirements_response.missing_info.question != "":
         return {

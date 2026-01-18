@@ -94,3 +94,54 @@ export function buildQueryParams(
   const queryString = searchParams.toString();
   return queryString ? `?${queryString}` : "";
 }
+
+// Travel System API
+export interface TravelSystemMessage {
+  message: string;
+  thread_id: string;
+  resume?: boolean;
+}
+
+export interface TravelSystemResponse {
+  message: string;
+  is_interrupt: boolean;
+  plan?: string;
+  sub_queries?: string[];
+  requirements?: Record<string, unknown>;
+  itinerary?: Record<string, unknown>;
+  bookings?: Record<string, unknown>;
+}
+
+export const travelSystemApi = {
+  async sendMessage(
+    message: string,
+    threadId: string,
+    resume: boolean = false
+  ): Promise<TravelSystemResponse> {
+    const backendUrl =
+      import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+    const endpoint = `${backendUrl}/api/travel-system/chat`;
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message,
+        thread_id: threadId,
+        resume,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(
+        `Travel System API Error: ${response.status}`,
+        response.status,
+        response
+      );
+    }
+
+    return await response.json();
+  },
+};

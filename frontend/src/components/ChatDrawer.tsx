@@ -11,12 +11,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Send, X } from "lucide-react";
+import { QueryPlanDisplay } from "./QueryPlanDisplay";
+import { travelSystemApi } from "@/lib/api";
 
 interface Message {
   id: string;
   content: string;
   sender: "user" | "assistant";
   timestamp: Date;
+  plan?: string;
+  subQueries?: string[];
 }
 
 interface ChatDrawerProps {
@@ -35,9 +39,11 @@ export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
     },
   ]);
   const [inputValue, setInputValue] = useState("");
-  const [isConnected, setIsConnected] = useState(false);
+  const [threadId, setThreadId] = useState(
+    `thread-${Date.now()}-${Math.random()}`,
+  );
+  const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -47,84 +53,78 @@ export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
     scrollToBottom();
   }, [messages]);
 
-  useEffect(() => {
-    if (open && !wsRef.current) {
-      // Initialize WebSocket connection (stub)
-      const wsUrl = import.meta.env.VITE_WS_URL || "wss://YOUR-BACKEND-WS";
-
-      try {
-        wsRef.current = new WebSocket(wsUrl);
-
-        wsRef.current.onopen = () => {
-          setIsConnected(true);
-          console.log("WebSocket connected (stub)");
-        };
-
-        wsRef.current.onmessage = (event) => {
-          const response = JSON.parse(event.data);
-          addMessage(response.content, "assistant");
-        };
-
-        wsRef.current.onerror = () => {
-          setIsConnected(false);
-          console.log("WebSocket connection failed - using local echo mode");
-        };
-
-        wsRef.current.onclose = () => {
-          setIsConnected(false);
-        };
-      } catch (error) {
-        console.log("WebSocket not available - using local echo mode");
-        setIsConnected(false);
-      }
-    }
-
-    return () => {
-      if (wsRef.current && !open) {
-        wsRef.current.close();
-        wsRef.current = null;
-        setIsConnected(false);
-      }
-    };
-  }, [open]);
-
-  const addMessage = (content: string, sender: "user" | "assistant") => {
+  const addMessage = (
+    content: string,
+    sender: "user" | "assistant",
+    plan?: string,
+    subQueries?: string[],
+  ) => {
     const newMessage: Message = {
       id: Date.now().toString(),
       content,
       sender,
       timestamp: new Date(),
+      plan,
+      subQueries,
     };
     setMessages((prev) => [...prev, newMessage]);
   };
 
-  const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
+  const handleSendMessage = async (messageOverride?: string) => {
+    const messageToSend = messageOverride || inputValue.trim();
+    if (!messageToSend) return;
 
-    const userMessage = inputValue.trim();
-    addMessage(userMessage, "user");
+    addMessage(messageToSend, "user");
     setInputValue("");
+    setIsLoading(true);
 
-    // Send message via WebSocket if connected
-    if (wsRef.current && isConnected) {
-      wsRef.current.send(JSON.stringify({ message: userMessage }));
-    } else {
-      // Local echo mode for demonstration
-      setTimeout(() => {
-        addMessage(
-          `Echo: ${userMessage} (WebSocket not connected - this is a demo response)`,
-          "assistant"
-        );
-      }, 1000);
+    try {
+      const response = await travelSystemApi.sendMessage(
+        messageToSend,
+        threadId,
+        false,
+      );
+
+      addMessage(
+        response.message,
+        "assistant",
+        response.plan,
+        response.sub_queries,
+      );
+
+      // If there's an interrupt, prompt user for response
+      if (response.is_interrupt) {
+        // Can handle interrupts here if needed
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+      addMessage(
+        "Sorry, there was an error processing your request. Please try again.",
+        "assistant",
+      );
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !isLoading) {
       e.preventDefault();
       handleSendMessage();
     }
   };
+
+  const handleSuggestedQuery = (query: string) => {
+    if (isLoading) return;
+    handleSendMessage(query);
+  };
+
+  const suggestedQueries = [
+    "I want to visit Tokyo and Kyoto for 2 weeks. I love culture, food, and gardens.",
+    "Plan a 5-day trip to Thailand with beach and culture experiences",
+    "I want a romantic getaway to Paris for a week",
+    "Family vacation to Singapore with kids-friendly activities",
+  ];
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -134,12 +134,7 @@ export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
             <div>
               <DrawerTitle>Travel Assistant</DrawerTitle>
               <DrawerDescription>
-                Get help with your travel planning
-                {isConnected ? (
-                  <span className="ml-2 text-green-600">● Connected</span>
-                ) : (
-                  <span className="ml-2 text-yellow-600">● Demo Mode</span>
-                )}
+                Plan your trip with AI assistance
               </DrawerDescription>
             </div>
             <DrawerClose asChild>
@@ -153,40 +148,84 @@ export function ChatDrawer({ open, onOpenChange }: ChatDrawerProps) {
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${
-                  message.sender === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
+              <div key={message.id}>
+                {message.plan && (
+                  <QueryPlanDisplay
+                    plan={message.plan}
+                    subQueries={message.subQueries}
+                  />
+                )}
                 <div
-                  className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                    message.sender === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted"
+                  className={`flex ${
+                    message.sender === "user" ? "justify-end" : "justify-start"
                   }`}
                 >
-                  <p className="text-sm">{message.content}</p>
-                  <p className="text-xs opacity-70 mt-1">
-                    {message.timestamp.toLocaleTimeString()}
-                  </p>
+                  <div
+                    className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                      message.sender === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted"
+                    }`}
+                  >
+                    <p className="text-sm">{message.content}</p>
+                    <p className="text-xs opacity-70 mt-1">
+                      {message.timestamp.toLocaleTimeString()}
+                    </p>
+                  </div>
                 </div>
               </div>
             ))}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="bg-muted rounded-lg px-4 py-2">
+                  <div className="flex space-x-2">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
         </div>
 
         <DrawerFooter className="border-t">
+          {messages.length <= 1 && (
+            <div className="mb-4">
+              <p className="text-sm text-muted-foreground mb-2">
+                Try these suggestions:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {suggestedQueries.map((query, index) => (
+                  <Button
+                    key={index}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSuggestedQuery(query)}
+                    disabled={isLoading}
+                    className="text-xs"
+                  >
+                    {query.length > 50 ? query.substring(0, 50) + "..." : query}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex space-x-2">
             <Input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
+              placeholder="Type your travel request..."
               className="flex-1"
+              disabled={isLoading}
             />
-            <Button onClick={handleSendMessage} size="icon">
+            <Button
+              onClick={handleSendMessage}
+              size="icon"
+              disabled={isLoading || !inputValue.trim()}
+            >
               <Send className="h-4 w-4" />
             </Button>
           </div>
